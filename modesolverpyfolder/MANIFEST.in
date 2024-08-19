@@ -1,0 +1,4 @@
+include modesolverpy/*.gpi
+include examples/*
+include README.md
+include LICENSE
