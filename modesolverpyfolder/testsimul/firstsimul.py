@@ -16,7 +16,7 @@ sub_width = 4.
 clad_height = 1.0
 film_thickness = 1.2
 angle = 77.
-
+#
 def struct_func(n_sub, n_wg, n_clad):
     return RidgeWaveguide(wl, x_step, y_step, wg_height, wg_width,
                              sub_height, sub_width, clad_height,
