@@ -8,7 +8,10 @@ from modesolverpy.structure import RidgeWaveguide
 from modesolverpy.mode_solver import ModeSolverFullyVectorial
 from modesolverpy.structure_base import StructureAni
 import matplotlib.pyplot as plt
+from scipy.interpolate import Akima1DInterpolator
 
+c = 2.998e8
+rng = np.random.default_rng()
 
 wl = 1.55 #Initial test wavelength
 x_step = 0.01 # Simulation step x-direction
@@ -28,12 +31,13 @@ def struct_func(n_sub, n_wg, n_clad):
     return RidgeWaveguide(wl, x_step, y_step, wg_height, wg_width,
                              sub_height, sub_width, clad_height,
                              n_sub, n_wg, angle, n_clad, film_thickness)
+fr_min = 2e14
+fr_max = 1e15
+fr_step = 2e13
+fr_num = int((fr_max-fr_min)/fr_step)+1
+frequencies = np.linspace(fr_min, fr_max, fr_num) 
 
-wl_min = 1.785 # Start wavelength
-wl_max = 2.280 # End wavelength
-wl_d = 0.005 # Wavelength step
-wl_num = int((wl_max-wl_min)/wl_d)+1 #Number of wavelengths to sweep over
-wavelengths = np.linspace(wl_min, wl_max, wl_num) # Wavelengths to sweep over
+wavelengths = c/frequencies *1e6
 
 
 
@@ -54,16 +58,16 @@ struct_ani.write_to_file() # To be combined with plot of mode
 
 
 # Create solver
-solver = ModeSolverFullyVectorial(mode_num, tol=0.0)
+solver = ModeSolverFullyVectorial(mode_num, tol=1e-9, boundary="SS00")
 
-""" # Only for wl = 1550 nm to plot modes
+# Only for wl = 1550 nm to plot modes
 solver.solve(struct_ani) 
-solver.write_modes_to_file() """
+solver.write_modes_to_file() 
 
 # solver.solve_ng(struct_ani, 0.01) # Group index at 1550 nm
 
 # Calculate effective refractive indices for all wavelengths
-n_effs = solver.solve_sweep_wavelength(struct_ani, wavelengths) 
+# n_effs = solver.solve_sweep_wavelength(struct_ani, wavelengths) 
 
 
 #  Retrieve from file
@@ -72,22 +76,49 @@ filename="wavelength_n_effs.dat"
 n_effs = np.loadtxt(modes_directory + filename, delimiter  = ",")
 
 # Calculate beta
-beta =  (n_effs[:, 1:].T/wavelengths).T*2*np.pi
-diff  = np.diff(beta, n = 2, axis = 0)
-beta2 = diff/(wl_d**2)
+beta =  (2*np.pi*frequencies*n_effs.T/c).T[:, 1]
+beta_fit = Akima1DInterpolator(frequencies, beta, method='akima')
+
+# derivatives too small
 
 plt.clf()
-plt.plot(wavelengths[1:-1], beta2, '-')
+plt.plot(frequencies, beta, 'o', label="simul")
+plt.plot(frequencies, beta_fit(frequencies), '-', label="Fit")
+plt.legend()
+plt.title("Beta fit")
+plt.ylabel("Beta [$m /s^2$]")
+plt.xlabel("Frequency [1/s]")
 plt.grid()
-legend_n = np.shape(beta2)[1]
-legend = ["" for i in range(legend_n)]
-for i in range(legend_n):
-    legend[i] = "Mode " + str(i)
+plt.savefig(modes_directory + "fit_plot.png")
 
-plt.legend(legend)
-plt.title("Dispersion")
-plt.ylabel("Dispersion")
-plt.xlabel("Wavlength $\mu m$")
-plt.savefig(modes_directory + "dispersion_curve.png")
-# diff(x) --> out1[i] = x[i+1] - x[i]
-# diff(x, n=2) --> out2[i] = out1[i+1]-out1[i] = x[i+2] - x[i+1] - (x[i+1] - x[i]) = x[i+2] - 2 x[i+1] + x[i]
+plt.clf()
+plt.plot(frequencies, beta_fit(frequencies, nu = 1))
+plt.title("First derivative of beta")
+plt.xlabel("Frequency [1/s]")
+plt.ylabel(r'$\beta_1$')
+plt.grid()
+plt.savefig(modes_directory + "beta_1.png")
+
+plt.clf()
+plt.plot(frequencies, beta_fit(frequencies, nu = 2))
+plt.title("Second derivative of beta")
+plt.xlabel("Frequency [1/s]")
+plt.ylabel(r'$\beta_2$')
+plt.grid()
+plt.savefig(modes_directory + "beta_2.png")
+
+plt.clf()
+plt.plot(frequencies, beta_fit(frequencies, nu = 3))
+plt.title("Third derivative of beta")
+plt.xlabel("Frequency [1/s]")
+plt.ylabel(r'$\beta_3$')
+plt.grid()
+plt.savefig(modes_directory + "beta_3.png")
+
+plt.clf()
+plt.plot(frequencies, beta_fit(frequencies, nu = 4))
+plt.title("Fourth derivative of beta")
+plt.xlabel("Frequency [1/s]")
+plt.ylabel(r'$\beta_4$')
+plt.grid()
+plt.savefig(modes_directory + "beta_4.png")
