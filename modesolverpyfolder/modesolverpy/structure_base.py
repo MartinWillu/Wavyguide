@@ -506,7 +506,7 @@ class Slab(Structure):
 
 class StructureAni():
     r"""
-    Anisottropic structure object.
+    Anisotropic structure object.
 
     This is used with the fully-vectorial simulation when
     an anisotropic material is being used.

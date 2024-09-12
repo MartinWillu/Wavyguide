@@ -15,6 +15,7 @@ from builtins import range
 
 import numpy
 import scipy
+import scipy.interpolate
 import scipy.optimize
 
 import collections as col
@@ -258,7 +259,7 @@ class _ModeSolverSemiVectorial():
             eigvals = eigs
             eigvecs = None
 
-        neff = self.wl * scipy.sqrt(eigvals) / (2 * numpy.pi)
+        neff = self.wl * numpy.sqrt(eigvals) / (2 * numpy.pi)
         if mode_profiles:
             phi = []
             for ieig in range(neigs):
@@ -970,7 +971,7 @@ class _ModeSolverVectorial():
                                         return_eigenvectors=mode_profiles,
                                         sigma=shift)
 
-        neffs = self.wl * scipy.sqrt(eigvals) / (2 * numpy.pi)
+        neffs = self.wl * numpy.sqrt(eigvals) / (2 * numpy.pi)
         if mode_profiles:
             Hxs = []
             Hys = []
@@ -1032,7 +1033,7 @@ class FDMode():
     def norm(self):
         x = centered1d(self.x)
         y = centered1d(self.y)
-        return scipy.sqrt(trapz2(self.intensity(), x=x, y=y))
+        return numpy.sqrt(trapz2(self.intensity(), x=x, y=y))
 
     def normalize(self):
         n = self.norm()
@@ -1053,8 +1054,8 @@ class FDMode():
         else:
             x0 = centered1d(self.x)
             y0 = centered1d(self.y)
-            I_TE_ = interp2(x, y, x0, y0, I_TE)
-            I_TM_ = interp2(x, y, x0, y0, I_TM)
+            I_TE_ = scipy.interpolate.RectBivariateSpline(x, y, I_TE)
+            I_TM_ = scipy.interpolate.RectBivariateSpline(x, y, I_TM)
             return (I_TE_, I_TM_)
 
     def intensity(self, x=None, y=None):
