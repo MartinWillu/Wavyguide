@@ -209,7 +209,7 @@ class _ModeSolver(with_metaclass(abc.ABCMeta)):
                 over.
             filename (str): The nominal filename to use when saving the
                 effective indices.  Defaults to 'wavelength_n_effs.dat'.
-            plot (bool): `True` if plots should be generates,
+            plot (bool): `True` if plots should be generated,
                 otherwise `False`.  Default is `True`.
 
         Returns:
@@ -230,13 +230,13 @@ class _ModeSolver(with_metaclass(abc.ABCMeta)):
                     title = "$n_{eff}$ vs Wavelength"
                     y_label = "$n_{eff}$"
                 else:
-                    title = "n_{effs} vs Wavelength" % x_label
+                    title = "n_{effs} vs Wavelength"
                     y_label = "n_{eff}"
                 self._plot_n_effs(
                     self._modes_directory + filename,
                     self._modes_directory + "fraction_te.dat",
                     "Wavelength",
-                    "n_{eff}",
+                    y_label,
                     title,
                 )
 
@@ -307,7 +307,7 @@ class _ModeSolver(with_metaclass(abc.ABCMeta)):
                     line_start = str(x_vals[i]) + ","
                 else:
                     line_start = ""
-                line = ",".join([str(np.round(n, 3)) for n in n_eff])
+                line = ",".join([str(n) for n in n_eff])
                 fs.write(line_start + line + "\n")
         return n_effs
 
@@ -340,7 +340,9 @@ class _ModeSolver(with_metaclass(abc.ABCMeta)):
             plt.xlabel(args["xlab"])
             plt.ylabel(args["ylab"])
             for i in range(args["num_modes"]):
-                plt.plot(data[0], data[i + 1], "-o")
+                plt.plot(data[0], data[i + 1], "-", label="Mode %i" %i)
+            plt.legend()
+            plt.grid()
             plt.savefig(args["filename_image"])
         else:
             gp.gnuplot(self._path + "n_effs.gpi", args, silent=False)
@@ -447,7 +449,7 @@ class _ModeSolver(with_metaclass(abc.ABCMeta)):
         args["filename_image"] = filename_image
 
         if MPL:
-            heatmap = np.loadtxt(filename_mode, delimiter=",")
+            heatmap = np.loadtxt(args["filename_data"], delimiter=",")
             plt.clf()
             plt.suptitle(title)
             if subtitle:
@@ -464,12 +466,27 @@ class _ModeSolver(with_metaclass(abc.ABCMeta)):
                     args["y_max"],
                 ),
                 aspect="auto",
+                cmap=plt.colormaps["turbo"]
             )
             plt.colorbar()
-            plt.savefig(filename_image)
+            
+            #Newly added
+            mode_type_file = "./modes_full_vec/mode_info"
+            if os.path.exists(mode_type_file):
+                mode_type = np.loadtxt(mode_type_file, delimiter=",", dtype="str")
+                plt.text(args["x_max"]*0.9, args["y_max"]*0.9, mode_type[mode_number, 1], horizontalalignment='center', verticalalignment='center')
+            filename_structure = "./material_index/material_index_xx.dat"
+            if os.path.exists(filename_structure):
+                structure = np.loadtxt(filename_structure, delimiter=",")
+                x = np.linspace(args["x_min"], args["x_max"], args["x_pts"]+1)
+                y = np.linspace(args["y_min"], args["y_max"], args["y_pts"]+1)
+                X, Y = np.meshgrid(x, y)
+                plt.contour(X, Y, structure)
+
+            plt.savefig(args["filename_image"])
         else:
             gp.gnuplot(self._path + "mode.gpi", args)
-            gp.trim_pad_image(filename_image)
+            gp. trim_pad_image(args["filename_image"])
 
         return args
 
@@ -729,6 +746,7 @@ class ModeSolverFullyVectorial(_ModeSolver):
     def write_modes_to_file(
         self,
         filename="mode.dat",
+        plotdirectory="./testsimul/",
         plot=True,
         fields_to_write=("Ex", "Ey", "Ez", "Hx", "Hy", "Hz"),
     ):
@@ -761,7 +779,7 @@ class ModeSolverFullyVectorial(_ModeSolver):
                 zip(self.n_effs, self.mode_types)
             ):
                 mode_idx = str(i)
-                line = "%s,%s,%.2f,%.3f" % (
+                line = "%s,%s,%.2f,%.5f" % (
                     mode_idx,
                     mode_type,
                     percentage,
@@ -795,5 +813,11 @@ class ModeSolverFullyVectorial(_ModeSolver):
                             area=area,
                             wavelength=self._structure._wl,
                         )
-
+                        """ structure_data = np.loadtxt("./material_index/material_index_zz.dat", delimiter=',')
+                        plt.contour(structure_data)
+                        mode_directory = plotdirectory + "mode_%i/"%i
+                        filenameplot = mode_directory + "mode_" + field_name + "_%i"%i
+                        if not os.path.isdir(mode_directory):
+                            os.mkdir(mode_directory)
+                        plt.savefig(filenameplot) """
         return self.modes
