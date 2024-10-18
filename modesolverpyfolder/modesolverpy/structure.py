@@ -56,24 +56,38 @@ class RidgeWaveguide(sb.Slabs):
     '''
     def __init__(self, wavelength, x_step, y_step, wg_height, wg_width, sub_height, sub_width,
                  clad_height, n_sub, n_wg, angle=0, n_clad=mat.Air().n(),
-                 film_thickness='wg_height'):
-        sb.Slabs.__init__(self, wavelength, y_step, x_step, sub_width)
+                 film_thickness='wg_height', half = False):
+        sb.Slabs.__init__(self, wavelength, y_step, x_step, sub_width, half=half)
 
         self.n_sub = n_sub
         self.n_clad = n_clad
         self.n_wg = n_wg
+        self.add_slab(sub_height, n_sub) # Add substrate
 
-        self.add_slab(sub_height, n_sub)
         if film_thickness != 'wg_height' and film_thickness != wg_height:
             assert film_thickness > 0., 'Film must have some thickness to it.'
             assert wg_height <= film_thickness, 'Waveguide can\'t be thicker than the film.'
             self.add_slab(film_thickness-wg_height, n_wg)
-        k = self.add_slab(wg_height, n_clad)
 
-        self.slabs[k].add_material(self.x_ctr-wg_width/2., self.x_ctr+wg_width/2.,
-                                   n_wg, angle)
+        if self.half:
+            x_left = 0 # X-Position at top left of waveguide
+            x_right = wg_width/2 # X-Position at top right of waveguide
+                     
+            k = self.add_slab(wg_height, n_clad) # Add waveguide background layer
+            self.slabs[k].add_material(x_left, x_right, n_wg, angle, half) # Add the waveguide material
+        else:
+            x_left = self.x_ctr - wg_width/2 # X-Position at top left of waveguide
+            x_right = self.x_ctr + wg_width/2 # X-Position at top right of waveguide 
+            k = self.add_slab(wg_height, n_clad) # Add waveguide background layer
+            self.slabs[k].add_material(x_left, x_right, n_wg, angle, half) # Add waveguide material
 
-        self.add_slab(clad_height, n_clad)
+        self.add_slab(clad_height, n_clad) # Add cladding
+
+        # Average between substrate and slab and between slab and cladding
+        # Is also run at the end of self.change_wavelength(wl)
+        for i in range(self.slab_count - 1):
+            self.layer_average(i)
+
 
 class WgArray(sb.Slabs):
     def __init__(self, wavelength, x_step, y_step, wg_height, wg_widths, wg_gaps, sub_height,

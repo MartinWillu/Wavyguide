@@ -133,7 +133,7 @@ class _AbstractStructure(with_metaclass(abc.ABCMeta)):
         '''
         if None not in (self.x_min, self.x_max, self.x_step) and \
                 self.x_min != self.x_max:
-            x = np.arange(self.x_min, self.x_max+self.x_step-self.y_step*0.1, self.x_step)
+            x = np.arange(self.x_min, self.x_max + self.x_step, self.x_step)
         else:
             x = np.array([])
         return x
@@ -145,11 +145,24 @@ class _AbstractStructure(with_metaclass(abc.ABCMeta)):
         '''
         if None not in (self.y_min, self.y_max, self.y_step) and \
                 self.y_min != self.y_max:
-            y = np.arange(self.y_min, self.y_max-self.y_step*0.1, self.y_step)
+            y = np.arange(self.y_min, self.y_max - 0.1*self.y_step, self.y_step)
         else:
             y = np.array([])
         return y
+    
+    @property
+    def n(self):
+        return self._n
 
+    @property
+    def n_func(self):
+        '''
+        function: a function that when passed a `x` and `y` values,
+            returns the refractive index profile of the structure,
+            interpolating if necessary.
+        '''
+        return interpolate.interp2d(self.x, self.y, self.n)
+    
     @property
     def eps(self):
         '''
@@ -170,14 +183,6 @@ class _AbstractStructure(with_metaclass(abc.ABCMeta)):
         interp = lambda x, y: interp_real(x, y) + 1.j*interp_imag(x, y)
         return interp
 
-    @property
-    def n_func(self):
-        '''
-        function: a function that when passed a `x` and `y` values,
-            returns the refractive index profile of the structure,
-            interpolating if necessary.
-        '''
-        return interpolate.interp2d(self.x, self.y, self.n)
 
     def _add_triangular_sides(self, xy_mask, angle, y_top_right, y_bot_left,
                               x_top_right, x_bot_left, n_material):
@@ -185,7 +190,6 @@ class _AbstractStructure(with_metaclass(abc.ABCMeta)):
         trap_len = (y_top_right - y_bot_left) / np.tan(angle)
         num_x_iterations = trap_len / self.x_step
         y_per_iteration =  num_x_iterations / self.y_pts
-
         lhs_x_start_index = int(x_bot_left/ self.x_step + 0.5)
         rhs_x_stop_index = int(x_top_right/ self.x_step + 1 + 0.5)
 
@@ -203,9 +207,165 @@ class _AbstractStructure(with_metaclass(abc.ABCMeta)):
 
         self.n[xy_mask] = n_material
         return self.n
+    
+    # Works only for angles > 45 deg and a square grid 
+    def _add_triangular_sides_2(self, angle, y_top_right, y_bot_left,
+                              x_top_right, x_bot_left, n_material, half=False):
+        angle = np.radians(angle)
+        tant = np.tan(angle)
+        # Index at top left of waveguide
+        lhs_stop_index = int(x_bot_left/ self.x_step) # Pixel on the lhs edge, crossed by waveguide sidewall
+        lhs_start_index = int(x_bot_left/ self.x_step + 1) # First pixel on lhs to be given whole n_wg
+        # Index at top right of waveguide 
+        rhs_start_index = int(x_top_right/ self.x_step) # First pixel on rhs to be given whole n_wg
+        rhs_stop_index = int(x_top_right/ self.x_step + 1) # Pixel on the edge, crossed by waveguide sidewall
+
+        A_0 = self.x_step*self.y_step # Area of unit cell
+        n_1 = n_material # Waveguide
+        n_2 = self._const_args[7](self._wl) # Cladding
+
+        y_offset = self._const_args[9] # Distance from y_max to waveguide height
+        # Calculate average of pixel at corner of waveguide
+
+        # Distance from left grid point to current position to calculate,
+        # usually where it crosses from the top, here the position of the corner
+        x_temp = x_top_right - rhs_start_index*self.x_step 
+        inclined_height = (self.x_step - x_temp)*tant 
+        y_temp = y_offset + inclined_height
+        # If line exits square to the side
+        if y_temp <= self.y_step:
+            # Calculate and add averaged n of inner square
+            A_2 = y_offset*self.x_step + inclined_height*(self.x_step-x_temp)/2 # Area of cladding in pixel
+            A_1 = A_0 - A_2 # Area of waveguide in pixel
+            n = (n_1*A_1 + n_2*A_2)/A_0 # Average refractive index
+            self.n[0, rhs_stop_index] = n
+
+            # Calculate x_temp for next row
+            x_temp = (self.y_step - y_temp)/tant
+
+            # Calculate and add averaged n of outer square
+            A_1 = (self.y_step-y_temp)*x_temp/2
+            A_2 = A_0 - A_1
+            n = (n_1*A_1 + n_2*A_2)/A_0
+            self.n[0, rhs_stop_index+1] = n
+
+            # Increment index of base wg
+            rhs_stop_index += 1
+        # If line exits square at the bottom
+        elif y_temp > self.y_step:
+            x_tr = (self.y_step - y_offset)/tant
+            A_1 = (self.y_step - y_offset)*x_temp + (self.y_step - y_offset)*x_tr/2
+            A_2 = A_0 - A_1
+            n = (n_1*A_1 + n_2*A_2)/A_0
+            self.n[0, rhs_stop_index] = n
+            x_temp = x_temp + x_tr
+
+        for i, _ in enumerate(self.y[1:], start=1):
+            y_temp = (self.x_step - x_temp)*tant
+            # If line exits square to the side
+            if y_temp <= self.y_step:
+                # Add base n_wg
+                self.n[i, rhs_start_index:rhs_stop_index] = n_1
+
+                # Calculate and add n_eff of inner square
+                A_2 = (self.x_step - x_temp)*y_temp/2 
+                A_1 = A_0 - A_2
+                n = (n_1*A_1+n_2*A_2)/A_0
+                self.n[i, rhs_stop_index] = n
+                # Calculate x_temp for next row
+                x_temp = (self.y_step - y_temp)/tant
+                # Calculate and add n_eff of outer square
+                A_1 = (self.y_step-y_temp)*x_temp/2
+                A_2 = A_0 - A_1
+                n = (n_1*A_1+n_2*A_2)/A_0
+                self.n[i, rhs_stop_index+1] = n
+                # Increment index of base wg
+                rhs_stop_index += 1
+            # If line exits square at the bottom
+            elif y_temp > self.y_step:
+                # Add base n_wg
+                self.n[i, rhs_start_index : rhs_stop_index] = n_1
+                # Base of triangle
+                x_tr = self.y_step/tant
+                # Calculate and add n_eff of split square
+                A_1 = x_temp*self.y_step + x_tr*self.y_step/2
+                A_2 = A_0 - A_1
+                n = (n_1*A_1+n_2*A_2)/A_0
+                self.n[i, rhs_stop_index] = n
+                x_temp += x_tr
+        # Do the same for the left side, unless half
+        if (not half):
+            x_temp = lhs_start_index*self.x_step - x_bot_left
+            inclined_height = (self.x_step - x_temp)*tant
+            y_temp = y_offset + inclined_height
+            # If line exits square to the side
+            if y_temp <= self.y_step:
+                # Calculate and add averaged n of inner square
+                A_2 = y_offset*self.x_step + inclined_height*(self.x_step-x_temp)/2 # Area of cladding in pixel
+                A_1 = A_0 - A_2 # Area of waveguide in pixel
+                n = (n_1*A_1 + n_2*A_2)/A_0 # Average refractive index
+                self.n[0, lhs_stop_index] = n
+
+                # Calculate x_temp for next row
+                x_temp = (self.y_step - y_temp)/tant
+
+                # Calculate and add averaged n of outer square
+                A_1 = (self.y_step-y_temp)*x_temp/2
+                A_2 = A_0 - A_1
+                n = (n_1*A_1 + n_2*A_2)/A_0
+                self.n[0, lhs_stop_index-1] = n
+
+                # Increment index of base wg
+                lhs_stop_index -= 1
+
+            # If line exits square at the bottom
+            elif y_temp > self.y_step:
+                x_tr = (self.y_step - y_offset)/tant
+                A_1 = (self.y_step - y_offset)*x_temp + (self.y_step - y_offset)*x_tr/2
+                A_2 = A_0 - A_1
+                n = (n_1*A_1 + n_2*A_2)/A_0
+                self.n[0, lhs_stop_index] = n
+                x_temp += x_tr
+
+
+            for i, _ in enumerate(self.y[1:], start=1):
+                y_temp = (self.x_step - x_temp)*tant
+                # If line exits square to the side
+                if y_temp <= self.y_step:
+                    # Add base n_wg
+                    self.n[i, lhs_start_index:lhs_stop_index:-1] = n_1
+
+                    # Calculate and add n_eff of inner square
+                    A_2 = (self.x_step - x_temp)*y_temp/2
+                    A_1 = A_0 - A_2
+                    n = (n_1*A_1+n_2*A_2)/A_0
+                    self.n[i, lhs_stop_index] = n
+                    # Calculate x_temp for next row
+                    x_temp = (self.y_step - y_temp)/tant
+                    # Calculate and add n_eff of outer square
+                    A_1 = (self.y_step-y_temp)*x_temp/2
+                    A_2 = A_0 - A_1
+                    n = (n_1*A_1+n_2*A_2)/A_0
+                    self.n[i, lhs_stop_index-1] = n
+                    # Increment index of base wg
+                    lhs_stop_index -= 1
+                # If line exits square at the bottom
+                elif y_temp > self.y_step:
+                    # Add base n_wg
+                    self.n[i, lhs_start_index:lhs_stop_index:-1] = n_1
+                    # Base of triangle
+                    x_tr = self.y_step/tant
+                    # Calculate and add n_eff of split square
+                    A_1 = x_temp*self.y_step + x_tr*self.y_step/2
+                    A_2 = A_0 - A_1
+                    n = (n_1*A_1+n_2*A_2)/A_0
+                    self.n[i, lhs_stop_index] = n
+                    x_temp += x_tr
+                
+        return self.n
 
     def _add_material(self, x_bot_left, y_bot_left, x_top_right, y_top_right,
-                     n_material, angle=0):
+                     n_material, angle=0, half=False):
         '''
         A low-level function that allows writing a rectangle refractive
         index profile to a `Structure`.
@@ -228,13 +388,19 @@ class _AbstractStructure(with_metaclass(abc.ABCMeta)):
         '''
         x_mask = np.logical_and(x_bot_left<=self.x, self.x<=x_top_right)
         y_mask = np.logical_and(y_bot_left<=self.y, self.y<=y_top_right)
+            
 
         xy_mask = np.kron(y_mask, x_mask).reshape((y_mask.size, x_mask.size))
         self.n[xy_mask] = n_material
 
+        if angle>45:
+            self._add_triangular_sides_2(angle, y_top_right, y_bot_left,
+                                       x_top_right, x_bot_left, n_material, half)
+            return self.n
+        
         if angle:
-            self._add_triangular_sides(xy_mask, angle, y_top_right, y_bot_left,
-                                       x_top_right, x_bot_left, n_material)
+            self._add_triangular_sides(xy_mask, angle, y_top_right, y_bot_left, 
+                                         x_top_right, x_bot_left, n_material)
 
         return self.n
 
@@ -276,9 +442,10 @@ class _AbstractStructure(with_metaclass(abc.ABCMeta)):
                 plt.title(args['title'])
                 plt.xlabel('$x$')
                 plt.ylabel('$y$')
-                plt.imshow(np.flipud(heatmap),
+                plt.matshow(np.flipud(heatmap),
                            extent=(args['x_min'], args['x_max'], args['y_min'], args['y_max']),
                            aspect="auto")
+                plt
                 plt.colorbar()
                 plt.savefig(filename_image)
             else:
@@ -298,10 +465,6 @@ class Structure(_AbstractStructure):
         self.y_step = y_step
         self.n_background = n_background
         self._n = np.ones((self.y.size,self.x.size), 'complex128') * n_background
-
-    @property
-    def n(self):
-        return self._n
 
 class Slabs(_AbstractStructure):
     '''
@@ -334,7 +497,7 @@ class Slabs(_AbstractStructure):
         slab_count (int): The number of :class:`Slab` objects
             added so far.
     '''
-    def __init__(self, wavelength, y_step, x_step, x_max, x_min=0.):
+    def __init__(self, wavelength, y_step, x_step, x_max, x_min=0., half = False):
         _AbstractStructure.__init__(self)
 
         self._wl = wavelength
@@ -343,12 +506,16 @@ class Slabs(_AbstractStructure):
         self.x_step = x_step
         self.y_step = y_step
         self.y_min = 0
+        self.half = half
+
 
         self.slabs = {}
         self.slab_count = 0
+        self.name = str(self.slab_count)
         self._next_start = 0.
+        self.offset = 0.
 
-    def add_slab(self, height, n_background=1., position='top'):
+    def add_slab(self, height, n_background=1., position='top', xa = None):
         '''
         Creates and adds a :class:`Slab` object.
 
@@ -362,24 +529,32 @@ class Slabs(_AbstractStructure):
         '''
         assert position in ('top', 'bottom')
 
-        name = str(self.slab_count)
-
         if not callable(n_background):
             n_back = lambda wl: n_background
         else:
             n_back = n_background
 
-        height_discretised = self.y_step*((height // self.y_step) + 1)
+        # Change name to current layer
+        self.name = str(self.slab_count)
 
+        # y_min of current layer
         y_min = self._next_start
-        y_max = y_min + height_discretised
-        self.slabs[name] = Slab(name, self.x_step, self.y_step, self.x_max,
-                                 y_max, self.x_min, y_min, n_back, self._wl)
 
-        self.y_max = y_max
-        self._next_start = y_min + height_discretised
-        self.slab_count += 1
+        y_max_real = y_min + height - self.offset # Real y position
+    
+        y_max_indices = int((y_max_real// self.y_step)+1)
+        y_max = self.y_step*y_max_indices # Discretised layer height 
+        
+        self.offset = y_max - y_max_real
+        self.slabs[self.name] = Slab(self.name, self.x_step, self.y_step, self.x_max,
+                                 y_max, self.x_min, y_min, n_back, self._wl, self.offset)
+        # print("Discretized height: ", y_max, " Real height: ", y_max_real, " Array height: ", self.slabs[self.name].y[-1])
 
+        self.y_max = y_max # After this is defined first time, self.y is available
+        self._next_start = y_max # Assign start of next layer to end of previous layer
+        self.slab_count += 1 # Increase number of laeyers
+        
+        
         if position == 'bottom':
             slabs = {}
             for k in self.slabs.keys():
@@ -387,7 +562,106 @@ class Slabs(_AbstractStructure):
             slabs['0'] = slabs.pop(str(self.slab_count))
             self.slabs = slabs
 
-        return name
+        return self.name
+
+    def layer_average(self, layer_num):
+        name1 = str(layer_num)
+        n1 = self.slabs[name1].n_background
+        offset1 = self.slabs[name1]._const_args[9]
+
+        name2 = str(layer_num+1)
+        n2 = self.slabs[name2].n_background
+        offset2 = self.slabs[name2]._const_args[9]
+
+        try:
+            name0 = str(layer_num-1)
+            offset0 = self.slabs[name0]._const_args[9]
+        except:
+            offset0 = 0.0
+
+    
+        n = (n1*(self.y_step - offset1) + n2*offset1)/self.y_step
+
+        if np.size(self.slabs[name1]._mat_params) > 0:
+            x_min = self.slabs[name1]._mat_params[0][0]
+            x_max = self.slabs[name1]._mat_params[0][1]
+             # Index at top left of waveguide
+            lhs_x_start_index = int(x_min/self.x_step)
+            # Index at top right of waveguide 
+            rhs_x_stop_index = int(x_max/self.x_step + 1)
+
+            x_array = np.arange(lhs_x_start_index, rhs_x_stop_index + 1, 1)
+    
+            self.n[0, x_array] = n
+
+        elif np.size(self.slabs[name2]._mat_params) > 0:
+            x_min = self.slabs[name2]._mat_params[0][0]
+            x_max = self.slabs[name2]._mat_params[0][1]
+            angle = self.slabs[name2]._mat_params[0][3]
+
+            y_min = self.slabs[name2].y_min
+            y_max = self.slabs[name2].y_max
+
+            tant = np.tan(np.radians(angle))
+            real_height = y_max - y_min - offset1 - offset2
+            # print("y_max", y_max, "y_min: ", y_min, "offset0: ", offset0, " offset1: ", offset1)
+            edge_width = real_height/tant
+            x_bot = x_max + edge_width
+            x_stop_index = int(np.floor(x_bot/self.x_step))
+            x_offset  = x_bot - x_stop_index*self.x_step
+            inclined_height = x_offset*tant
+            A_0 = self.x_step*self.y_step
+            y_temp = offset1 - inclined_height
+            
+
+            x_wg = np.arange(x_min/self.x_step, (x_bot + self.x_step)/self.x_step, dtype='int64')
+            x_whole = np.arange(self.x_min/self.x_step, (self.x_max + self.x_step)/self.x_step, dtype="int64")
+            x_inv = np.delete(x_whole, x_wg)
+            self.slabs[name1].n[0, x_inv] = n
+
+            
+            if y_temp < 0:
+                A_2 = (self.x_step - x_offset)*offset0 + offset0*offset0/(2*tant)
+                A_1 = A_0 - A_2
+                n = (n1*A_1 + n2*A_2)/A_0
+                self.slabs[name1].n[0, x_stop_index + 1] = n
+
+            elif y_temp > 0:
+                A_1 = (self.y_step - offset0)*self.x_step + x_offset*inclined_height/2
+                A_2 = A_0 - A_1
+                n = (n1*A_1 + n2*A_2)/A_0
+                self.slabs[name1].n[0, x_stop_index + 2] = n
+
+                A_2 = y_temp*y_temp/(2*tant)
+                A_1 = A_0 - A_2
+                n = (n1*A_1 + n2*A_2)/A_0
+                self.slabs[name1].n[0, x_stop_index + 1] = n
+
+            if not self.half:
+                x_bot = x_min - edge_width
+                x_stop_index = int(np.ceil(x_bot/self.x_step))
+                x_offset  = x_stop_index*self.x_step - x_bot
+                inclined_height = x_offset*tant
+                y_temp = offset1 - inclined_height
+                if y_temp < 0:
+                    A_2 = (self.x_step - x_offset)*offset0 + offset0*offset0/(2*tant)
+                    A_1 = A_0 - A_2
+                    n = (n1*A_1 + n2*A_2)/A_0
+                    self.slabs[name1].n[0, x_stop_index + 1] = n
+                elif y_temp > 0:
+                    A_1 = (self.y_step - offset0)*self.x_step + x_offset*inclined_height/2
+                    A_2 = A_0 - A_1
+                    n = (n1*A_1 + n2*A_2)/A_0
+                    self.slabs[name1].n[0, x_stop_index + 2] = n
+
+                    A_2 = y_temp*y_temp/(2*tant)
+                    A_1 = A_0 - A_2
+                    n = (n1*A_1 + n2*A_2)/A_0
+                    self.slabs[name1].n[0, x_stop_index + 1] = n
+        else:
+            self.slabs[name1].n[0, :] = n
+
+        
 
     def change_wavelength(self, wavelength):
         '''
@@ -408,10 +682,12 @@ class Slabs(_AbstractStructure):
 
             s = Slab(*const_args)
             for mat_arg in mat_args:
-                s.add_material(*mat_arg)
-
+                s.add_material(*mat_arg) # Also runs volume average of sidewall
+            
             self.slabs[name] = s
 
+        for i in range(self.slab_count - 1):
+            self.layer_average(i)
         self._wl = wavelength
 
     @property
@@ -455,16 +731,18 @@ class Slab(Structure):
             index.
         wavelength (float): The wavelength the structure
             operates at.
+        offset (float): The difference between y_max and real height
 
     Attributes:
         name (str): The name of the :class:`Slab` object.
         position (int): A unique identifier for the
         :class:`Slab` object.
     '''
+
     position = 0
 
     def __init__(self, name, x_step, y_step, x_max, y_max, x_min, y_min,
-                 n_background, wavelength):
+                 n_background, wavelength, offset):
         self._wl = wavelength
         self.name = name
         self.position = Slab.position
@@ -473,10 +751,11 @@ class Slab(Structure):
         Structure.__init__(self, x_step, y_step, x_max, y_max, x_min, y_min,
                            n_background(self._wl))
 
-        self._const_args = [name, x_step, y_step, x_max, y_max, x_min, y_min, n_background, wavelength]
+
+        self._const_args = [name, x_step, y_step, x_max, y_max, x_min, y_min, n_background, wavelength, offset]
         self._mat_params = []
 
-    def add_material(self, x_min, x_max, n, angle=0):
+    def add_material(self, x_min, x_max, n, angle=0, half = False):
         '''
         Add a refractive index between two x-points.
 
@@ -494,14 +773,13 @@ class Slab(Structure):
                 sidewalls at `x_min` and `x_max`.  This is useful
                 for defining a ridge with angled sidewalls.
         '''
-        self._mat_params.append([x_min, x_max, n, angle])
-
+        self._mat_params.append([x_min, x_max, n, angle, half])
         if not callable(n):
             n_mat = lambda wl: n
         else:
             n_mat = n
 
-        Structure._add_material(self, x_min, self.y_min, x_max, self.y_max, n_mat(self._wl), angle)
+        Structure._add_material(self, x_min, self.y_min, x_max, self.y_max, n_mat(self._wl), angle, half)
         return self.n
 
 class StructureAni():
@@ -701,6 +979,11 @@ class StructureAni():
                     'filename_data': fn,
                     'filename_image': filename_image
                 }
+                args['wg_x_min'] = self.xx.slabs['2']._mat_params[0][0]
+                args['wg_x_max'] = self.xx.slabs['2']._mat_params[0][1]
+                args['wg_y_min'] = self.xx.slabs['2'].y_min
+                args['wg_y_max'] = self.xx.slabs['2'].y_max
+
                 if MPL:
                     heatmap = np.loadtxt(args['filename_data'], delimiter=',')
                     plt.clf()
@@ -710,6 +993,10 @@ class StructureAni():
                     plt.imshow(np.flipud(heatmap),
                                extent=(args['x_min'], args['x_max'], args['y_min'], args['y_max']),
                                aspect="auto")
+                    plt.axis('square')
+                    """ plt.plot([args['x_min'], args['wg_x_min'], args['wg_x_min'], args['wg_x_max'], args['wg_x_max'], args['x_max']], 
+                             [args['wg_y_min'], args['wg_y_min'], args['wg_y_max'], args['wg_y_max'], args['wg_y_min'], args['wg_y_min']],
+                             linewidth = 0.5) """
                     plt.colorbar()
                     plt.savefig(filename_image)
                 else:

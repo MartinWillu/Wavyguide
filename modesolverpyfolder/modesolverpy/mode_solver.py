@@ -144,7 +144,7 @@ class _ModeSolver(with_metaclass(abc.ABCMeta)):
                     txt = ",".join("%s %.2f" % pair for pair in mt)
                     fs.write(txt + "\n")
 
-            with open(self._modes_directory + "fraction_te.dat", "w") as fs:
+            with open(self._modes_directory + "fraction_te_" + filename, "w") as fs:
                 header = "fraction te"
                 fs.write("# param sweep," + header + "\n")
                 for param, fte in zip(sweep_param_list, fractions_te):
@@ -152,7 +152,7 @@ class _ModeSolver(with_metaclass(abc.ABCMeta)):
                     txt += ",".join("%.2f" % f for f in fte)
                     fs.write(txt + "\n")
 
-            with open(self._modes_directory + "fraction_tm.dat", "w") as fs:
+            with open(self._modes_directory + "fraction_tm_" + filename, "w") as fs:
                 header = "fraction tm"
                 fs.write("# param sweep," + header + "\n")
                 for param, ftm in zip(sweep_param_list, fractions_tm):
@@ -168,12 +168,16 @@ class _ModeSolver(with_metaclass(abc.ABCMeta)):
                     title = "n_{effs} vs %s" % x_label
                     y_label = "n_{eff}"
                 self._plot_n_effs(
-                    self._modes_directory + filename, self._modes_directory + "fraction_te.dat", x_label, y_label, title
+                    self._modes_directory + filename, 
+                    self._modes_directory + "fraction_te_" + filename, 
+                    x_label, 
+                    y_label, 
+                    title
                 )
 
                 title = "TE Fraction vs %s" % x_label
                 self._plot_fraction(
-                    self._modes_directory + "fraction_te.dat",
+                    self._modes_directory + "fraction_te_" + filename,
                     x_label,
                     "TE Fraction [%]",
                     title,
@@ -182,7 +186,7 @@ class _ModeSolver(with_metaclass(abc.ABCMeta)):
 
                 title = "TM Fraction vs %s" % x_label
                 self._plot_fraction(
-                    self._modes_directory + "fraction_tm.dat",
+                    self._modes_directory + "fraction_tm_" + filename,
                     x_label,
                     "TM Fraction [%]",
                     title,
@@ -197,6 +201,7 @@ class _ModeSolver(with_metaclass(abc.ABCMeta)):
         wavelengths,
         filename="wavelength_n_effs.dat",
         plot=True,
+        fraction_mode_list=[]
     ):
         """
         Solve for the effective indices of a fixed structure at
@@ -216,28 +221,79 @@ class _ModeSolver(with_metaclass(abc.ABCMeta)):
             list: A list of the effective indices found for each wavelength.
         """
         n_effs = []
+        mode_types = []
+        fractions_te = []
+        fractions_tm = []
         for w in tqdm.tqdm(wavelengths, ncols=70):
             structure.change_wavelength(w)
             self.solve(structure)
+            mode_types.append(self.mode_types)
+            fractions_te.append(self.fraction_te)
+            fractions_tm.append(self.fraction_tm)
             n_effs.append(np.real(self.n_effs))
 
         if filename:
             self._write_n_effs_to_file(
-                n_effs, self._modes_directory + filename, wavelengths
+                n_effs, self._modes_directory + filename, wavelengths 
             )
+            # Added 16.10.2024
+            with open(self._modes_directory + "mode_types.dat", "w") as fs:
+                header = ",".join(
+                    "Mode%i" % i for i, _ in enumerate(mode_types[0])
+                )
+                fs.write("# " + header + "\n")
+                for mt in mode_types:
+                    txt = ",".join("%s %.2f" % pair for pair in mt)
+                    fs.write(txt + "\n")
+
+            with open(self._modes_directory + "fraction_te_" + filename, "w") as fs:
+                header = "fraction te"
+                fs.write("# param sweep," + header + "\n")
+                for param, fte in zip(wavelengths, fractions_te):
+                    txt = "%.6f," % param
+                    txt += ",".join("%.2f" % f for f in fte)
+                    fs.write(txt + "\n")
+
+            with open(self._modes_directory + "fraction_tm_" + filename, "w") as fs:
+                header = "fraction tm"
+                fs.write("# param sweep," + header + "\n")
+                for param, ftm in zip(wavelengths, fractions_tm):
+                    txt = "%.6f," % param
+                    txt += ",".join("%.2f" % f for f in ftm)
+                    fs.write(txt + "\n")
             if plot:
                 if MPL:
                     title = "$n_{eff}$ vs Wavelength"
                     y_label = "$n_{eff}$"
+                    x_label = "$Wavelength ($\mu m$)"
                 else:
                     title = "n_{effs} vs Wavelength"
                     y_label = "n_{eff}"
+                    x_label = "Wavelength (\mu m)"
                 self._plot_n_effs(
                     self._modes_directory + filename,
-                    self._modes_directory + "fraction_te.dat",
-                    "Wavelength",
+                    self._modes_directory + "fraction_te_" + filename,
+                    x_label,
                     y_label,
                     title,
+                )
+                # Added 16.10.2024
+                title = "TE Fraction vs %s" % x_label
+                self._plot_fraction(
+                    self._modes_directory + "fraction_te_" + filename,
+                    x_label,
+                    "TE Fraction [%]",
+                    title,
+                    fraction_mode_list,
+                )
+
+                title = "TM Fraction vs %s" % x_label
+                self._plot_fraction(
+                    self._modes_directory + "fraction_tm_" + filename,
+                    x_label,
+                    "TM Fraction [%]",
+                    title,
+                    fraction_mode_list,
                 )
 
         return n_effs
@@ -301,13 +357,14 @@ class _ModeSolver(with_metaclass(abc.ABCMeta)):
 
     def _write_n_effs_to_file(self, n_effs, filename, x_vals=None):
         with open(filename, "w") as fs:
-            fs.write('# Sweep param, mode 1, mode 2, ...\n')
+            fs.write('# Sweep param, mode type 1, mode 1, mode type 2, mode 2, ...\n')
             for i, n_eff in enumerate(n_effs):
                 if x_vals is not None:
                     line_start = str(x_vals[i]) + ","
                 else:
                     line_start = ""
-                line = ",".join([str(n) for n in n_eff])
+
+                line = ",".join([str(n_eff[j]) for j in range(n_eff.__len__())])
                 fs.write(line_start + line + "\n")
         return n_effs
 
@@ -318,6 +375,7 @@ class _ModeSolver(with_metaclass(abc.ABCMeta)):
                 fs.write(e_str + "\n")
         return mode
 
+    # Why add filename_te_fractions when te fractions are not used here? Use it to change color of scatter points
     def _plot_n_effs(self, filename_n_effs, filename_te_fractions, xlabel, ylabel, title):
         args = {
             "titl": title,
@@ -340,7 +398,7 @@ class _ModeSolver(with_metaclass(abc.ABCMeta)):
             plt.xlabel(args["xlab"])
             plt.ylabel(args["ylab"])
             for i in range(args["num_modes"]):
-                plt.plot(data[0], data[i + 1], "-", label="Mode %i" %i)
+                plt.plot(data[0], data[1 + i], "-", label="Mode %i" %i)
             plt.legend()
             plt.grid()
             plt.savefig(args["filename_image"])
@@ -444,19 +502,32 @@ class _ModeSolver(with_metaclass(abc.ABCMeta)):
             "ctr_y": ctr_y,
         }
 
+        if self._structure.xx.half:
+            args["x_min"] = -1*args["x_max"]
+            args["x_pts"] *= 2 
+
         filename_image_prefix, _ = os.path.splitext(filename_mode)
         filename_image = filename_image_prefix + ".png"
         args["filename_image"] = filename_image
 
         if MPL:
             heatmap = np.loadtxt(args["filename_data"], delimiter=",")
+
+            sum = np.sum(heatmap)
+            if sum < 0:
+                heatmap *= -1
+
+            if self._structure.xx.half:
+                    structure_reversed = np.flip(heatmap, axis=1)
+                    heatmap = np.hstack((structure_reversed, heatmap))
+
             plt.clf()
             plt.suptitle(title)
             if subtitle:
                 plt.rcParams.update({"axes.titlesize": "small"})
                 plt.title(title2)
-            plt.xlabel("x")
-            plt.ylabel("y")
+            plt.xlabel("x [$\mu m$]")
+            plt.ylabel("y [$\mu m$]")
             plt.imshow(
                 np.flipud(heatmap),
                 extent=(
@@ -478,11 +549,15 @@ class _ModeSolver(with_metaclass(abc.ABCMeta)):
             filename_structure = "./material_index/material_index_xx.dat"
             if os.path.exists(filename_structure):
                 structure = np.loadtxt(filename_structure, delimiter=",")
-                x = np.linspace(args["x_min"], args["x_max"], args["x_pts"]+1)
-                y = np.linspace(args["y_min"], args["y_max"], args["y_pts"]+1)
+                # Mirror on left side if half structure
+                if self._structure.xx.half:
+                    structure_reversed = np.flip(structure, axis=1)
+                    structure = np.hstack((structure_reversed, structure))
+                x = np.linspace(args["x_min"], args["x_max"], structure.shape[1])
+                y = np.linspace(args["y_min"], args["y_max"], structure.shape[0])
                 X, Y = np.meshgrid(x, y)
                 plt.contour(X, Y, structure)
-
+            plt.axis('square')
             plt.savefig(args["filename_image"])
         else:
             gp.gnuplot(self._path + "mode.gpi", args)
@@ -642,7 +717,7 @@ class ModeSolverFullyVectorial(_ModeSolver):
             'S' - Hx is symmetric and, Hy is antisymmetric, and '0' - Hx and Hy are zero
             immediately outside of the boundary.
             The string identifies all four boundary conditions, in the order:
-            North, south, east, west. For example, boundary='000A'. Default is '0000'.
+            East, west, south, north. For example, boundary='000A'. Default is '0000'.
         initial_mode_guess (list): An initial mode guess for the modesolver.
         initial_n_eff_guess (list): An initial effective index guess for the modesolver.
     """
@@ -689,8 +764,6 @@ class ModeSolverFullyVectorial(_ModeSolver):
             self.modes
         )
         self.mode_types = self._get_mode_types()
-
-        self._initial_mode_guess = None
 
         self.n_effs_te, self.n_effs_tm = self._sort_neffs(self._ms.neff)
 

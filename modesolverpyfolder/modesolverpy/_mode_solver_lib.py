@@ -63,7 +63,7 @@ class _ModeSolverSemiVectorial():
            'A' - Hx is antisymmetric, Hy is symmetric.
            'S' - Hx is symmetric and, Hy is antisymmetric.
            '0' - Hx and Hy are zero immediately outside of the boundary.
-        The string identifies all four boundary conditions, in the order: North, south, east, west.
+        The string identifies all four boundary conditions, in the order: East, west, south, north.
         For example, boundary='000A'
 
     method : str
@@ -249,7 +249,7 @@ class _ModeSolverSemiVectorial():
         eigs = eigen.eigs(A,
                           k=neigs,
                           which='LR',
-                          tol=0.001,
+                          tol=self.tol,
                           ncv=None,
                           v0 = initial_mode_guess,
                           return_eigenvectors=mode_profiles)
@@ -321,7 +321,7 @@ class _ModeSolverVectorial():
            'A' - Hx is antisymmetric, Hy is symmetric.
            'S' - Hx is symmetric and, Hy is antisymmetric.
            '0' - Hx and Hy are zero immediately outside of the boundary.
-        The string identifies all four boundary conditions, in the order: North, south, east, west.
+        The string identifies all four boundary conditions, in the order: East, west, south, north.
         For example, boundary='000A'
 
     Returns
@@ -350,10 +350,10 @@ class _ModeSolverVectorial():
 
         dx = numpy.diff(x)
         dy = numpy.diff(y)
-
+        
         dx = numpy.r_[dx[0], dx, dx[-1]].reshape(-1, 1)
         dy = numpy.r_[dy[0], dy, dy[-1]].reshape(1, -1)
-
+        
         xc = (x[:-1] + x[1:]) / 2
         yc = (y[:-1] + y[1:]) / 2
 
@@ -948,7 +948,7 @@ class _ModeSolverVectorial():
             Ez = solver.modes[0].Ez
         """
 
-        from scipy.sparse.linalg import eigen
+        from scipy.sparse.linalg import eigs
 
         self.nmodes = neigs
         self.tol = tol
@@ -962,16 +962,17 @@ class _ModeSolverVectorial():
         else:
             shift = None
 
-        [eigvals, eigvecs] = eigen.eigs(A,
+        [eigvals, eigvecs] = eigs(A,
                                         k=neigs,
                                         which='LR',
-                                        tol=0.001,
+                                        tol=self.tol,
                                         ncv=None,
                                         v0 = initial_mode_guess,
                                         return_eigenvectors=mode_profiles,
                                         sigma=shift)
-
+        
         neffs = self.wl * numpy.sqrt(eigvals) / (2 * numpy.pi)
+        
         if mode_profiles:
             Hxs = []
             Hys = []
@@ -1001,7 +1002,7 @@ class _ModeSolverVectorial():
                 self.modes.append(
                     FDMode(self.wl, self.x, self.y, neff, Ey, Ex, Ez, Hy, Hx, Hz).normalize())
 
-        return self
+        return eigvecs
 
     def __str__(self):
         descr = 'Vectorial Finite Difference Modesolver\n'
